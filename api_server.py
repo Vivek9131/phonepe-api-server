@@ -72,13 +72,18 @@ def get_valid_random_ifsc():
 
 def generate_transactions(account_id, count=5):
     statuses = ["SUCCESS", "FAILED", "PENDING"]
-    
+
     with get_db() as conn:
         cursor = conn.cursor()
-        
+
         account = conn.execute('SELECT * FROM accounts WHERE id = ?', (account_id,)).fetchone()
+        if not account:
+            return {"error": f"No account found for ID {account_id}"}
+
         user = conn.execute('SELECT * FROM users WHERE id = ?', (account['user_id'],)).fetchone()
-        
+        if not user:
+            return {"error": f"No user found for ID {account['user_id']}"}
+
         for _ in range(count):
             amount = round(random.uniform(10, 5000), 2)
             txn_type = random.choice(['CREDIT', 'DEBIT'])
@@ -93,7 +98,7 @@ def generate_transactions(account_id, count=5):
                 INSERT INTO transactions 
                 (account_id, amount, type, merchant, status, timestamp, upi_reference)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (account_id, amount, txn_type, status, timestamp.isoformat(), upi_ref))
+            ''', (account_id, amount, txn_type, merchant_id, status, timestamp.isoformat(), upi_ref))
             txn_id = cursor.lastrowid
 
             # Create payload JSON
@@ -125,8 +130,10 @@ def generate_transactions(account_id, count=5):
                 cursor.execute('UPDATE accounts SET balance = balance + ? WHERE id = ?', (amount, account_id))
             else:
                 cursor.execute('UPDATE accounts SET balance = balance - ? WHERE id = ?', (amount, account_id))
-        
+
         conn.commit()
+        return {"success": f"{count} transactions created for account ID {account_id}"}
+
 
 # API Endpoints
 @app.route('/api/register', methods=['POST'])
