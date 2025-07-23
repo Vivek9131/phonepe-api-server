@@ -200,7 +200,7 @@ def get_transactions(mobile):
                 account_id = cursor.lastrowid
                 
                 # Generate 5-10 random transactions
-                generate_transactions(cursor, account_id)
+                generate_transactions(account_id, random.randint(5, 10))
                 conn.commit()
                 
                 # Now fetch the newly created account
