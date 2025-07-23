@@ -169,53 +169,57 @@ def register():
 @app.route('/api/transactions/<mobile>', methods=['GET'])
 def get_transactions(mobile):
     try:
-        # First validate it's an Indian mobile number
+        # Validate Indian mobile number
         if not (mobile.isdigit() and len(mobile) == 10 and mobile.startswith(('6', '7', '8', '9'))):
-            return jsonify({'error': 'Invalid mobile number'}), 400
+            return jsonify({'error': 'Invalid Indian mobile number'}), 400
 
         with get_db() as conn:
+            cursor = conn.cursor()
+            
             # Try to find existing account
-            account = conn.execute('''
+            cursor.execute('''
                 SELECT a.id, a.balance 
                 FROM accounts a
                 JOIN users u ON a.user_id = u.id
                 WHERE u.mobile = ?
-            ''', (mobile,)).fetchone()
+            ''', (mobile,))
+            account = cursor.fetchone()
             
             if not account:
                 # Auto-create account for this Indian number
-                conn.execute('INSERT INTO users (mobile) VALUES (?)', (mobile,))
-                user_id = conn.lastrowid
+                cursor.execute('INSERT INTO users (mobile) VALUES (?)', (mobile,))
+                user_id = cursor.lastrowid  # Get the last inserted row ID
                 
                 upi_id = f"{mobile}@ybl"  # Simple UPI ID generation
                 balance = round(random.uniform(1000, 5000), 2)
                 
-                conn.execute('''
+                cursor.execute('''
                     INSERT INTO accounts (user_id, balance, upi_id)
                     VALUES (?, ?, ?)
                 ''', (user_id, balance, upi_id))
-                account_id = conn.lastrowid
+                account_id = cursor.lastrowid
                 
                 # Generate 5-10 random transactions
-                generate_transactions(conn, account_id)
+                generate_transactions(cursor, account_id)
                 conn.commit()
                 
                 # Now fetch the newly created account
-                account = conn.execute('''
-                    SELECT id, balance FROM accounts WHERE id = ?
-                ''', (account_id,)).fetchone()
+                cursor.execute('SELECT id, balance FROM accounts WHERE id = ?', (account_id,))
+                account = cursor.fetchone()
             
             # Get transactions
-            transactions = conn.execute('''
+            cursor.execute('''
                 SELECT * FROM transactions 
                 WHERE account_id = ?
                 ORDER BY timestamp DESC
                 LIMIT 10
-            ''', (account['id'],)).fetchall()
+            ''', (account['id'],))
+            transactions = cursor.fetchall()
             
             return jsonify({
                 'balance': account['balance'],
                 'transactions': [dict(txn) for txn in transactions],
+                'message': 'Auto-generated transactions for Indian number'
             })
             
     except Exception as e:
