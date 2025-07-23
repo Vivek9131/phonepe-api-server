@@ -71,7 +71,6 @@ def get_valid_random_ifsc():
     return random.choice(banks) + '000' + ''.join(random.choices(string.digits, k=3))
 
 def generate_transactions(account_id, count=5):
-    merchants = ["Amazon", "Flipkart", "Zomato", "Swiggy", "IRCTC"]
     statuses = ["SUCCESS", "FAILED", "PENDING"]
     
     with get_db() as conn:
@@ -83,7 +82,6 @@ def generate_transactions(account_id, count=5):
         for _ in range(count):
             amount = round(random.uniform(10, 5000), 2)
             txn_type = random.choice(['CREDIT', 'DEBIT'])
-            merchant = random.choice(merchants)
             status = random.choice(statuses)
             timestamp = (datetime.now() - timedelta(days=random.randint(0, 30)))
             upi_ref = f"UPI{random.randint(100000000, 999999999)}"
@@ -95,7 +93,7 @@ def generate_transactions(account_id, count=5):
                 INSERT INTO transactions 
                 (account_id, amount, type, merchant, status, timestamp, upi_reference)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (account_id, amount, txn_type, merchant, status, timestamp.isoformat(), upi_ref))
+            ''', (account_id, amount, txn_type, status, timestamp.isoformat(), upi_ref))
             txn_id = cursor.lastrowid
 
             # Create payload JSON
@@ -171,8 +169,12 @@ def register():
 @app.route('/api/transactions/<mobile>', methods=['GET'])
 def get_transactions(mobile):
     try:
+        # First validate it's an Indian mobile number
+        if not (mobile.isdigit() and len(mobile) == 10 and mobile.startswith(('6', '7', '8', '9'))):
+            return jsonify({'error': 'Invalid mobile number'}), 400
+
         with get_db() as conn:
-            # Get account info
+            # Try to find existing account
             account = conn.execute('''
                 SELECT a.id, a.balance 
                 FROM accounts a
@@ -181,7 +183,27 @@ def get_transactions(mobile):
             ''', (mobile,)).fetchone()
             
             if not account:
-                return jsonify({'error': 'Account not found'}), 404
+                # Auto-create account for this Indian number
+                conn.execute('INSERT INTO users (mobile) VALUES (?)', (mobile,))
+                user_id = conn.lastrowid
+                
+                upi_id = f"{mobile}@ybl"  # Simple UPI ID generation
+                balance = round(random.uniform(1000, 5000), 2)
+                
+                conn.execute('''
+                    INSERT INTO accounts (user_id, balance, upi_id)
+                    VALUES (?, ?, ?)
+                ''', (user_id, balance, upi_id))
+                account_id = conn.lastrowid
+                
+                # Generate 5-10 random transactions
+                generate_transactions(conn, account_id)
+                conn.commit()
+                
+                # Now fetch the newly created account
+                account = conn.execute('''
+                    SELECT id, balance FROM accounts WHERE id = ?
+                ''', (account_id,)).fetchone()
             
             # Get transactions
             transactions = conn.execute('''
@@ -191,13 +213,11 @@ def get_transactions(mobile):
                 LIMIT 10
             ''', (account['id'],)).fetchall()
             
-            # Convert to list of dicts
-            transactions_list = [dict(txn) for txn in transactions]
-            
             return jsonify({
                 'balance': account['balance'],
-                'transactions': transactions_list
+                'transactions': [dict(txn) for txn in transactions],
             })
+            
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
